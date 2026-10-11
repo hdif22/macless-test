@@ -1,0 +1,39 @@
+# Records the app running on the iOS Simulator (GitHub's free Mac) as video footage.
+name: Record simulator
+on: workflow_dispatch
+jobs:
+  record:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Boot an iPhone simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys;d=json.load(sys.stdin)['devices'];print([x['udid'] for r,v in d.items() if 'iOS' in r for x in v if 'iPhone' in x['name'] and 'Pro' in x['name'] and 'Max' not in x['name']][-1])")
+          echo "UDID=$UDID" >> $GITHUB_ENV
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 --wifiBars 3 --cellularBars 4
+          xcrun simctl list devices | grep Booted
+      - name: Build the app first (so the recording has no build wait)
+        run: flutter build ios --simulator --debug
+      - name: Run the app and record the screen
+        run: |
+          xcrun simctl io "$UDID" recordVideo --codec=h264 --force sim.mp4 &
+          REC=$!
+          sleep 2
+          flutter test integration_test/demo_test.dart -d "$UDID"
+          kill -INT $REC
+          wait $REC || true
+          xcrun simctl io "$UDID" screenshot sim.png
+          ls -la sim.mp4 sim.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simulator-footage
+          path: |
+            sim.mp4
+            sim.png
